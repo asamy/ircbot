@@ -330,7 +330,7 @@ static unsigned long hash(const char *str) {
     return hash;
 }
 
-static void error(const char *err, ...) {
+static void __attribute__((noreturn)) error(const char *err, ...) {
     va_list ap;
 
     va_start(ap, err);
@@ -401,7 +401,6 @@ out_fd:
     if (sockfd != -1)
         close(sockfd);
     error("failed to connect to %s: %s\n", addr, strerror(errno));
-    return -1;   /* shut GCC up */
 }
 
 static int sends(int fd, char *buf, ...) {
@@ -517,7 +516,7 @@ static const char *strsub(const char *str, int start, int end) {
     ret = xmalloc(len - (start + end + 1));
     if (!ret) {
         fprintf(stderr,
-                "strsub: fatal: failed to allocate %lu bytes to str\n"
+                "strsub: fatal: failed to allocate %u bytes to str\n"
                 "start = %d\tend = %d\n",
                 len - (start + end + 1), start, end
                 );
@@ -695,13 +694,10 @@ derp:
     sockfd = get_sock(host, port);
     while (true) {
         fd_set f;
-        struct timeval tv;
+        struct timeval tv = { .tv_sec = 1, .tv_usec = 0 };
 
         FD_ZERO(&f);
         FD_SET(sockfd, &f);
-
-        tv.tv_sec = 1;
-        tv.tv_usec = 0;
 
         select(sockfd + 1, &f, NULL, NULL, &tv);
         if (!FD_ISSET(sockfd, &f))
