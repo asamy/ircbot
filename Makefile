@@ -1,7 +1,7 @@
 CC = gcc
 CFLAGS = -O0 -g -Wall -Wno-unused-parameter -Wextra
 LDFLAGS = -g
-LIBS = -llua
+LIBS =
 OUT = a.out
 
 all: $(OUT)

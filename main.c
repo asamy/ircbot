@@ -27,19 +27,12 @@
 #include <sys/wait.h>
 #include <arpa/inet.h>
 #include <time.h>
-#include <lua.h>
-#include <lauxlib.h>
-#include <lualib.h>
-#ifdef lua_jit
-#include <luajit.h>
-#endif
 
 char *g_chan = "#test_kef_bot";
 char *m_nick = "helpfulguy";
 bool verbose=true;
-lua_State *lstate = NULL; 
 
-/** Memory management **/
+#if 0
 static void *xmalloc(size_t size) {
     void *ret;
 
@@ -55,7 +48,6 @@ static void *xmalloc(size_t size) {
 
     return ret;
 }
-
 static void *xrealloc(void *old, size_t size) {
     void *new;
 
@@ -80,7 +72,6 @@ static void xfree(void *ptr) {
     if (ptr)
         free(ptr);
 }
-
 /** Hash map implementation based on strmap by Per Ola Kristensson. */
 struct pair {
     char *key;
@@ -329,6 +320,7 @@ static unsigned long hash(const char *str) {
         hash = ((hash << 5) + hash) + c;
     return hash;
 }
+#endif
 
 static void __attribute__((noreturn)) error(const char *err, ...) {
     va_list ap;
@@ -420,78 +412,6 @@ static int sends(int fd, char *buf, ...) {
     return written;
 }
 
-/** Lua related */
-static const char *l_getstring(void) {
-    lua_pop(lstate, 1);
-    if (!lua_isstring(lstate, 0) && !lua_isnumber(lstate, 0))
-        return NULL;
-
-    return lua_tostring(lstate, 0);
-}
-
-static int l_getnumber(void) {
-    lua_pop(lstate, 1);
-    return lua_tonumber(lstate, 0);
-}
-
-static int l_send(lua_State *lstate) { 
-    const char *str = l_getstring();
-    int sockfd  = l_getnumber();
-
-    if (sockfd < 0)
-        goto out;
-
-    if (*str == '\0')
-        goto out;
-
-    int32_t len = strlen(str);
-    if (str[len - 1] != '\n')
-        goto out;
-
-    int32_t written = sends(sockfd, (char *)str);
-    if (written != len)
-        fprintf(stderr,
-                "warning: the data sent is incomplete!\n");
-
-    lua_pushinteger(lstate, written);
-    return 1;
-out:
-    fprintf(stderr,
-            "fatal: invalid data passed to c_send\n");
-    lua_pushboolean(lstate, false);
-    return 1;
-}
-
-/* lua functions
- */
-
-static const struct l_table {
-    const char *name;
-    int32_t (*func) (lua_State *);
-} lua_table[] = {
-    { "c_send", l_send },
-    {NULL,      NULL   }
-};
-
-static void l_call(int numargs) {
-    int32_t size = lua_gettop(lstate);
-    int32_t h    = lua_gettop(lstate) - numargs;
-
-    lua_insert(lstate, h);
-    if (!lua_pcall(lstate, numargs, 1, h)) {
-        fprintf(stderr,
-                "lua error: %s\n",
-                l_getstring());
-    }
-    
-    lua_remove(lstate, h);
-
-    if ((lua_gettop(lstate) + numargs + 1) != size) {
-        fprintf(stderr,
-                "warning: stack size changed!!!\n");
-    }
-}
-
 /* String misc */
 static int strwildmatch(const char *pattern, const char *string) {
     switch (*pattern) {
@@ -510,10 +430,8 @@ static int strpos(const char *s1, const char *s2) {
 static const char *strsub(const char *str, int start, int end) {
     char *ret;
     int len = strlen(str);
-    if (start < 0 || start >= len || end < 0  || end >= len)
-        return NULL;
 
-    ret = xmalloc(len - (start + end + 1));
+    ret = malloc(len - (start + end + 1));
     if (!ret) {
         fprintf(stderr,
                 "strsub: fatal: failed to allocate %u bytes to str\n"
@@ -553,6 +471,22 @@ static void _PRIVMSG(int fd, char *sender, char *str) {
     char *from, *message;
     int i;
 
+    static const char *messages[] = {
+        ",,l,,",        "MEAF",
+        "KEF KEF",      "FEK FEK",
+        "FLAP FLAP",    "FLOP",
+        "FOP",          "fap*",
+        "FAP",          NULL
+    };
+    static const char *responds[] = {
+        ",,l,,",        ",,l,,",
+        "FEK FEK",      "KEF KEF",
+        "MEAF MEAF",    "FLAP FLAP",
+        "FLAP",         "https://www.youjizz.com/",
+        "https://tube8.com/",  NULL
+    };
+
+
     for (i=0;i<strlen(sender)&&sender[i]!='!';i++);
     sender[i]=0;
     sender++;   /* strip the : */
@@ -562,18 +496,16 @@ static void _PRIVMSG(int fd, char *sender, char *str) {
     from=str;
     message=str+i+2;
 
-    if (verbose)
-        printf("Processing PRIVMSG from %s\n", sender);
-    /* If our nick is present, take it out */
-    if (!strwildmatch(m_nick, message))
-        message+=i+1;
-
-    lua_getglobal(lstate, "onPrivMsg");
-    lua_pushnumber(lstate, fd);
-    lua_pushstring(lstate, sender);
-    lua_pushstring(lstate, from);
-    lua_pushstring(lstate, message);
-    l_call(4);
+    printf("From: %s\tSender:%s\nMessage: %s\n", from, sender, message);
+    if (!strcmp(from, g_chan)) {
+        int j;
+        for (j = 0; messages[j] != NULL && responds[j] != NULL; j++) {
+            if (!strwildmatch(message, messages[j])) {
+                sends(fd, "PRIVMSG %s :%s\n", from, responds[j]);
+                break;
+            }
+        }
+    }
 }
 
 static const struct messages {
@@ -651,45 +583,8 @@ int main(int argc, char **argv) {
         }
     }
 
-    lstate = luaL_newstate();
-    if (!lstate) {
-        fprintf(stderr,
-                "fatal: failed to load lua state: %s\n",
-                lua_tostring(lstate, 0));
-        return -1;
-    }
-
-    luaL_openlibs(lstate);
-#ifdef lua_jit
-    luaJIT_setmode(lstate, 0, LUAJIT_MODE_ENGINE | LUAJIT_MODE_ON);
-#endif
- 
-    int32_t rc = luaL_loadfile(lstate, definit);
-    if (rc) {
-        fprintf(stderr,
-                "fatal: failed to load %s: %s\n",
-                definit, lua_tostring(lstate, 0));
-        lua_close(lstate);
-        return -1;
-    }
-
-    rc = lua_pcall(lstate, 0, 0, 0);
-    if (rc) {
-        fprintf(stderr,
-                "fatal: failed to parse %s:\n%s",
-                definit,
-                lua_tostring(lstate, 0)
-               );
-        lua_close(lstate);
-        return -1;
-    }
-
-    unsigned int j;
-    for (j = 0; lua_table[j].name != NULL; j++)
-        lua_register(lstate, lua_table[j].name, lua_table[j].func);
-
-    init_map(&g_database);
-    init_map(&g_blacklist);
+    //init_map(&g_database);
+    //init_map(&g_blacklist);
 derp:
     sockfd = get_sock(host, port);
     while (true) {
