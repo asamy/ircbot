@@ -32,7 +32,6 @@ char *g_chan = "#test_kef_bot";
 char *m_nick = "testfulguy";
 bool verbose=true;
 
-#if 0
 static void *xmalloc(size_t size) {
     void *ret;
 
@@ -72,6 +71,7 @@ static void xfree(void *ptr) {
     if (ptr)
         free(ptr);
 }
+
 /** Hash map implementation based on strmap by Per Ola Kristensson. */
 struct pair {
     char *key;
@@ -88,10 +88,6 @@ struct map {
     struct bucket *buckets;
 };
 
-static struct map g_blacklist = {
-    .count = 20,
-    .buckets = NULL
-};
 static struct map g_database = {
     .count = 1000,
     .buckets = NULL
@@ -320,7 +316,6 @@ static unsigned long hash(const char *str) {
         hash = ((hash << 5) + hash) + c;
     return hash;
 }
-#endif
 
 static bool is_upper_string(const char *str) {
     int i;
@@ -344,8 +339,6 @@ static void __attribute__((noreturn)) error(const char *err, ...) {
     va_end(ap);
     exit(EXIT_FAILURE);
 }
-
-/** Socket related */
 
 static void setup_async(int fd) {
     int old_flags;
@@ -436,29 +429,6 @@ static int strwildmatch(const char *pattern, const char *string) {
     }
 }
 
-static int strpos(const char *s1, const char *s2) {
-    int result = strstr(s1, s2) - s1;
-    return result < 0 ? -1 : result;
-}
-
-static const char *strsub(const char *str, int start, int end) {
-    char *ret;
-    int len = strlen(str);
-
-    ret = malloc(len - (start + end + 1));
-    if (!ret) {
-        fprintf(stderr,
-                "strsub: fatal: failed to allocate %u bytes to str\n"
-                "start = %d\tend = %d\n",
-                len - (start + end + 1), start, end
-                );
-        return NULL;
-    }
-
-    memcpy(ret, &str[start], end);
-    return ret;
-}
-
 static void filter(char *a) {
     while (a[strlen(a)-1] == '\r' || a[strlen(a)-1] == '\n') a[strlen(a)-1] = 0;
 }
@@ -481,33 +451,99 @@ static void _recon(int fd, char *sender, char *str) {
     close(fd);
 }
 
+static void help_cmd(int fd, char *sender, int argc, char **argv);
+static void set_cmd(int fd, char *sender, int argc, char **argv)
+{
+    char desc[2048], *to;
+    int i;
+    char *what;
+
+    printf("%d\n",argc);
+    if (argc < 2) {
+        sends(fd, "PRIVMSG %s :%s: usage set <what> <description>\n", g_chan, sender);
+        return;
+    }
+    what = argv[0];
+    to = desc;
+    for (i = 1; i < argc; i++) {
+        to = stpcpy(to, argv[i]);
+        to = stpcpy(to, " ");
+    }
+
+    desc[2047] = 0;
+    if (!map_exists(&g_database, what)) {
+        map_put(&g_database, what, desc);
+        sends(fd, "PRIVMSG %s :Ok, %s\n", g_chan, sender);
+    } else {
+        sends(fd, "PRIVMSG %s :Sorry, %s, the term %s has a description.  Try !what %s\n",
+                g_chan, sender, what, what);
+    }
+}
+
+static void get_cmd(int fd, char *sender, int argc, char **argv)
+{
+    int i;
+    char out_buf[2048];
+    static const char *ok_responds[] = {
+        "I heard",  "Last time", 
+        "I think",  NULL
+    }, *nope_responds[] = {
+        "I don't know",
+        "Sorry, I can't find that term.",
+        "What is it?",  "I'm done",
+        "Why don't you RTFM for it?",
+        "Have you tried reading the manual?",
+        "I give up, what is it?", 
+        NULL
+    };
+
+    if (argc < 1) {
+        sends(fd, "PRIVMSG %s :%s: Usage !get <what>\n", g_chan, sender);
+        return;
+    }
+
+    if (!!map_get(&g_database, argv[0], out_buf, 2048)) {
+        i = rand() % (sizeof(ok_responds) / sizeof(ok_responds[0]));
+        if (ok_responds[i] == NULL)
+            i=0;
+        sends(fd, "PRIVMSG %s :%s %s was %s, %s\n", g_chan, ok_responds[i], argv[0], out_buf, sender);
+    } else {
+        i = rand() % (sizeof(nope_responds) / sizeof(nope_responds[0]));
+        if (nope_responds[i] == NULL)
+            i=0;
+        sends(fd, "PRIVMSG %s :%s, %s\n", g_chan, nope_responds[i], sender);
+    }
+}
+
+static void count_cmd(int fd, char *sender, int argc, char **argv) {
+    sends(fd, "PRIVMSG %s :I have %d buckets in database, %s\n",
+            g_chan, map_get_count(&g_database), sender);
+}
+
+static const struct command {
+    const char *name;
+    void (*cmd_func) (int fd, char *sender, int argc, char **argv);
+} commands[] = {
+    { "help",  help_cmd    },
+    { "set",   set_cmd     },
+    { "add",   set_cmd     },
+    { "what",  get_cmd     },
+    { "count", count_cmd   },
+    { NULL,   NULL         }
+};
+
+static void help_cmd(int fd, char *sender, int argc, char **argv) {
+    int i;
+    sends(fd, "Available commands:\n");
+    for (i = 0; commands[i].name != NULL; i++)
+        sends(fd, "!%s\n", commands[i].name);
+}
+
 static void _PRIVMSG(int fd, char *sender, char *str) {
     char *from, *message;
     int i;
-
-    static const char *messages[] = {
-        ",,l,,",        "MEAF",
-        "KEF KEF",      "FEK FEK",
-        "FLAP FLAP",    "FLOP",
-        "FOP",          "fap*",
-        "FAP",
-        NULL
-    };
-    static const char *responds[] = {
-        ",,l,,",        ",,l,,",
-        "FEK FEK",      "KEF KEF",
-        "MEAF MEAF",    "FLAP FLAP",
-        "FLAP",         "https://www.youjizz.com/",
-        "https://tube8.com/", NULL
-    };
-
-    static const char *idiotic_stuff[] = {
-        "retarded leecher", "nigger cunt",
-        "fapper",          "idiotic nigger",
-        "retarded faggot",  "idiotic retard",
-        "go fap a donkey",  "faggot moron",
-        "stupid cunt", NULL
-    };
+    char *p, **argv;
+    int j, argc;
 
     for (i=0;i<strlen(sender)&&sender[i]!='!';i++);
     sender[i]=0;
@@ -518,32 +554,28 @@ static void _PRIVMSG(int fd, char *sender, char *str) {
     from=str;
     message=str+i+2;
 
-    printf("From: %s\tSender:%s\nMessage: %s\n", from, sender, message);
+    printf("From: %s\tSender: %s\nMessage: %s\n", from, sender, message);
     if (from[0] == '#') {
-        int j;
-        bool success=false;
-        for (j = 0; messages[j] != NULL && responds[j] != NULL; j++) {
-            if (!strwildmatch(messages[j], message)) {
-                sends(fd, "PRIVMSG %s :%s\n", from, responds[j]);
-                success=true;
-                break;
+        if (message[0] == '!') {
+            message++;
+            for (i=0; commands[i].name != NULL; i++) {
+                int len = strlen(commands[i].name);
+                if (!strncmp(message, commands[i].name, len)) {
+                    message += len + 1;
+
+                    argv = (char **)calloc(30, sizeof(char *));
+                    for (p = strtok(message, " "), j =0; p && *p && j < 30; p=strtok((char *)NULL, " "),j++)
+                        argv[j] = strdup(p);
+                    argv[j + 1] = NULL;
+                    argc = j;
+
+                    (*commands[i].cmd_func)(fd, sender, argc, argv);
+                    free(argv);
+                    break;
+                }    
             }
-        }
-        if (!success) {
-            if (is_upper_string(message))
-                sends(fd, "PRIVMSG %s :OMG SHOUTING\n", from);
-            else if (!strwildmatch("!malin", message))
-                sends(fd, "PRIVMSG %s :%s\n", from, idiotic_stuff[rand() % 
-                            (sizeof(idiotic_stuff) / sizeof(idiotic_stuff[0]))]);
-            else if (!strwildmatch("!SlurpDerp", message))
-                sends(fd, "PRIVMSG %s :master\n", from);
-            else if (!strwildmatch("!Fallen", message))
-                sends(fd, "PRIVMSG %s :bot master\n", from);
-            else if (!strwildmatch("!Cykotitan", message))
-                sends(fd, "PRIVMSG %s :slave master\n", from);
-            else if (!strwildmatch("!Talaturen", message))
-                sends(fd, "PRIVMSG %s :OP\n", from);
-        }
+        } else if (is_upper_string(message))
+            sends(fd, "PRIVMSG %s :OMG SHOUTING\n", from);
     }
 }
 
@@ -575,7 +607,6 @@ int main(int argc, char **argv) {
         {"port",    required_argument,    0, 'p'},
         {"nick",    required_argument,    0, 'n'},
         {"help",    no_argument,          0, 'v'},
-        {"init",    required_argument,    0, 'i'},
         {"silent",  no_argument,          0, 's'},
         {0,         0,                    0,  0 }
     };
@@ -585,13 +616,6 @@ int main(int argc, char **argv) {
     char *host = "irc.quakenet.org";
     int port = 6667;
     int sockfd = -1;
-    char *definit = "def_init.lua";
-
-    printf("Defaults:\n");
-    printf("Chan:\t%s\n", g_chan);
-    printf("Host:\t%s\n", host);
-    printf("Port:\t%d\n", port);
-    printf("Nick:\t%s\n", m_nick);
 
     srand(time(NULL));
     while ((c = getopt_long(argc, argv, "c:h:p:n:vs", opts, &optidx)) != -1) {
@@ -601,7 +625,6 @@ int main(int argc, char **argv) {
             case 'p': port=atoi(optarg); break;
             case 'n': m_nick=optarg; break;
             case 's': verbose=false; break;
-            case 'i': definit=optarg; break;
             case 'v':
                 printf("Usage %s v0.01 <options...>\n", argv[0]);
                 printf("Mandatory arguments to long options are mandatory for short options too.\n");
@@ -624,8 +647,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    //init_map(&g_database);
-    //init_map(&g_blacklist);
+    init_map(&g_database);
 derp:
     sockfd = get_sock(host, port);
     while (true) {
