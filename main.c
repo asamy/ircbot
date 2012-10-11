@@ -532,11 +532,17 @@ static void _PRIVMSG(int fd, char *sender, char *str) {
         if (!success) {
             if (is_upper_string(message))
                 sends(fd, "PRIVMSG %s :OMG SHOUTING\n", from);
-            else if (!strwildmatch("!malin", message)) {
-                srand(time(NULL));
-                sends(fd, "PRIVMSG %s :%s\n", from, idiotic_stuff[(rand() % 
-                            sizeof(idiotic_stuff) / sizeof(idiotic_stuff[0]) + 1)]);
-            }
+            else if (!strwildmatch("!malin", message))
+                sends(fd, "PRIVMSG %s :%s\n", from, idiotic_stuff[rand() % 
+                            (sizeof(idiotic_stuff) / sizeof(idiotic_stuff[0]))]);
+            else if (!strwildmatch("!SlurpDerp", message))
+                sends(fd, "PRIVMSG %s :master\n", from);
+            else if (!strwildmatch("!Fallen", message))
+                sends(fd, "PRIVMSG %s :bot master\n", from);
+            else if (!strwildmatch("!Cykotitan", message))
+                sends(fd, "PRIVMSG %s :slave master\n", from);
+            else if (!strwildmatch("!Talaturen", message))
+                sends(fd, "PRIVMSG %s :OP\n", from);
         }
     }
 }
@@ -586,6 +592,8 @@ int main(int argc, char **argv) {
     printf("Host:\t%s\n", host);
     printf("Port:\t%d\n", port);
     printf("Nick:\t%s\n", m_nick);
+
+    srand(time(NULL));
     while ((c = getopt_long(argc, argv, "c:h:p:n:vs", opts, &optidx)) != -1) {
         switch (c) {
             case 'c': g_chan=optarg; break;
