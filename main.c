@@ -29,7 +29,7 @@
 #include <time.h>
 
 char *g_chan = "#test_kef_bot";
-char *m_nick = "helpfulguy";
+char *m_nick = "testfulguy";
 bool verbose=true;
 
 #if 0
@@ -322,6 +322,20 @@ static unsigned long hash(const char *str) {
 }
 #endif
 
+static bool is_upper_string(const char *str) {
+    int i;
+    int len;
+
+    if (!str || *str=='\0')
+        return false;
+    len = strlen(str);
+    for (i = 0; i < len; i++) {
+        if (!isupper(str[i]))
+            return false;
+    }
+    return true;
+}
+
 static void __attribute__((noreturn)) error(const char *err, ...) {
     va_list ap;
 
@@ -476,16 +490,17 @@ static void _PRIVMSG(int fd, char *sender, char *str) {
         "KEF KEF",      "FEK FEK",
         "FLAP FLAP",    "FLOP",
         "FOP",          "fap*",
-        "FAP",          NULL
+        "FAP",          "!malin",
+        NULL
     };
     static const char *responds[] = {
         ",,l,,",        ",,l,,",
         "FEK FEK",      "KEF KEF",
         "MEAF MEAF",    "FLAP FLAP",
         "FLAP",         "https://www.youjizz.com/",
-        "https://tube8.com/",  NULL
+        "https://tube8.com/",  "idiotic retard",
+        NULL
     };
-
 
     for (i=0;i<strlen(sender)&&sender[i]!='!';i++);
     sender[i]=0;
@@ -497,13 +512,19 @@ static void _PRIVMSG(int fd, char *sender, char *str) {
     message=str+i+2;
 
     printf("From: %s\tSender:%s\nMessage: %s\n", from, sender, message);
-    if (!strcmp(from, g_chan)) {
+    if (from[0] == '#') {
         int j;
+        bool success=false;
         for (j = 0; messages[j] != NULL && responds[j] != NULL; j++) {
-            if (!strwildmatch(message, messages[j])) {
+            if (!strwildmatch(messages[j], message)) {
                 sends(fd, "PRIVMSG %s :%s\n", from, responds[j]);
+                success=true;
                 break;
             }
+        }
+        if (!success) {
+            if (is_upper_string(message))
+                sends(fd, "PRIVMSG %s :OMG SHOUTING\n", from);
         }
     }
 }
