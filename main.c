@@ -490,7 +490,7 @@ static void _PRIVMSG(int fd, char *sender, char *str) {
         "KEF KEF",      "FEK FEK",
         "FLAP FLAP",    "FLOP",
         "FOP",          "fap*",
-        "FAP",          "!malin",
+        "FAP",
         NULL
     };
     static const char *responds[] = {
@@ -498,8 +498,15 @@ static void _PRIVMSG(int fd, char *sender, char *str) {
         "FEK FEK",      "KEF KEF",
         "MEAF MEAF",    "FLAP FLAP",
         "FLAP",         "https://www.youjizz.com/",
-        "https://tube8.com/",  "idiotic retard",
-        NULL
+        "https://tube8.com/", NULL
+    };
+
+    static const char *idiotic_stuff[] = {
+        "retarded leecher", "nigger cunt",
+        "fapper",          "idiotic nigger",
+        "retarded faggot",  "idiotic retard",
+        "go fap a donkey",  "faggot moron",
+        "stupid cunt", NULL
     };
 
     for (i=0;i<strlen(sender)&&sender[i]!='!';i++);
@@ -525,6 +532,11 @@ static void _PRIVMSG(int fd, char *sender, char *str) {
         if (!success) {
             if (is_upper_string(message))
                 sends(fd, "PRIVMSG %s :OMG SHOUTING\n", from);
+            else if (!strwildmatch("!malin", message)) {
+                srand(time(NULL));
+                sends(fd, "PRIVMSG %s :%s\n", from, idiotic_stuff[(rand() % 
+                            sizeof(idiotic_stuff) / sizeof(idiotic_stuff[0]) + 1)]);
+            }
         }
     }
 }
