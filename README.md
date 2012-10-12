@@ -1,4 +1,4 @@
-laughing-octo-nemesis.
+ircbot
 ======================
 
-TheDerpBot - repo name was inspirted by github
+An IRC bot based on Debian's IRC dpkg bot.
