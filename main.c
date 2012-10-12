@@ -31,6 +31,8 @@
 char *g_chan = "#test_kef_bot";
 char *m_nick = "testfulguy";
 char *g_owner = "fallen";
+char *auth = "auth";
+char *auth_pw = "auth_pw";
 bool verbose=true;
 
 static void *xmalloc(size_t size) {
@@ -462,6 +464,9 @@ static void filter(char *a) {
 }
 
 static  void _376(int fd, char *sender, char *str) {
+    sends(fd, "PRIVMSG Q@CServe.quakenet.org :AUTH %s %s\n",
+            auth, auth_pw);
+    sends(fd, "MODE %s +x\n", m_nick);
     sends(fd, "JOIN %s\n", g_chan);
 }
 
