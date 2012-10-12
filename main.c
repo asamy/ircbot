@@ -591,6 +591,16 @@ static void why_cmd(int fd, char *sender, int argc, char **argv) {
                 g_chan, argv[0], out_buf);
 }
 
+static void quit_cmd(int fd, char *sender, int argc, char **argv) {
+    if (strncmp(sender, g_owner, strlen(g_owner)))
+        return;
+    if (argc == 1)
+        sends(fd, "QUIT :shutting down\n");
+    else
+        sends(fd, "QUIT :%s\n", argv[0]);
+    exit(EXIT_SUCCESS);
+}
+
 static void clear_cmd(int fd, char *sender, int argc, char **argv) {
     if (strncmp(sender, g_owner, strlen(g_owner)))
         return;
@@ -620,6 +630,7 @@ static const struct command {
     { "sl",    sl_cmd      },
     { "unsl",  unsl_cmd    },
     { "why",   why_cmd     },
+    { "quit",  quit_cmd    },
     { NULL,   NULL         }
 };
 
