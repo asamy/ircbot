@@ -571,7 +571,7 @@ static void rm_cmd(int fd, char *sender, int argc, char **argv) {
         }
     }
 
-    if (j > 1) {
+    if (j > 0) {
         sends(fd, "PRIVMSG %s :Successfully, removed %d elements, %s\n",
             g_chan, j, sender);
     } else {
@@ -614,6 +614,20 @@ static void why_cmd(int fd, char *sender, int argc, char **argv) {
                 g_chan, argv[0], out_buf);
 }
 
+static void clear_cmd(int fd, char *sender, int argc, char **argv) {
+    if (strncmp(sender, g_owner, strlen(g_owner)))
+        return;
+    map_free(&g_database);
+    init_map(&g_database);
+}
+
+static void slc_cmd(int fd, char *sender, int argc, char **argv) {
+    if (strncmp(sender, g_owner, strlen(g_owner)))
+        return;
+    map_free(&g_shitlist);
+    init_map(&g_shitlist);
+}
+
 static const struct command {
     const char *name;
     void (*cmd_func) (int fd, char *sender, int argc, char **argv);
@@ -623,6 +637,8 @@ static const struct command {
     { "add",   set_cmd     },
     { "what",  what_cmd    },
     { "count", count_cmd   },
+    { "clear", clear_cmd   },
+    { "slc",   slc_cmd     },
     { "rm",    rm_cmd      },
     { "sl",    sl_cmd      },
     { "unsl",  unsl_cmd    },
