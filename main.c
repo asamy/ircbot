@@ -7,6 +7,9 @@
  * can do whatever you want with this stuff. If we meet some day, and you think
  * this stuff is worth it, you can buy me a beer in return.
  *
+ * TODO:
+ *   Multi channel support.
+ *
  * Hash map implementation (c) 2009, 2011 Per Ola Kristensson.
  * GNU GPL v3.  See also:
  * http://pokristensson.com/code/strmap/strmap.c
@@ -37,7 +40,40 @@ char *m_nick = "testfulguy";
 char *g_owner = "fallen";
 char *auth = "auth";
 char *auth_pw = "auth_pw";
+char *g_dbfile = "bot.db";    /* A normal text file (INI like) */
+char *g_slfile = "sl.db";     /* same as above */
+char *g_wlfile = "wl.db";     /* same... */
 bool verbose=true;
+
+static int strwildmatch(const char *pattern, const char *string) {
+    switch (*pattern) {
+        case '\0': return *string;
+        case '*': return !(!strwildmatch(pattern+1, string) || (*string && !strwildmatch(pattern, string+1)));
+        case '?': return !(*string && !strwildmatch(pattern+1, string+1));
+        default: return !((toupper(*pattern) == toupper(*string)) && !strwildmatch(pattern+1, string+1));
+    }
+}
+
+static char *strstrip(char *s) {
+    static char line[2048+1];
+    char *last;
+
+    while (isspace(*s) && *s)
+        s++;
+
+    memset(line, 0, sizeof(line));
+    strcpy(line, s);
+    last = line + strlen(s);
+
+    while (last > line) {
+        if (!isspace(*(last-1)))
+            break;
+        last--;
+    }
+
+    *last = 0;
+    return line;
+}
 
 static void xfree(void *ptr) {
     if (ptr)
@@ -57,17 +93,14 @@ struct bucket {
 struct map {
     unsigned int count;
     struct bucket *buckets;
+    const char *filename;
 };
 
-static struct map g_database = {
-    .count = 1,
-    .buckets = NULL
-};
+#define MAP_INITIALIZER { .count = 1, .buckets = NULL }
 
-static struct map g_shitlist = {
-    .count = 1,
-    .buckets = NULL
-};
+static struct map g_database = MAP_INITIALIZER;
+static struct map g_shitlist = MAP_INITIALIZER;
+static struct map g_whitelist = MAP_INITIALIZER;
 
 static struct pair *get_pair(struct bucket *bucket, const char *key);
 static unsigned long hash(const char *str);
@@ -84,7 +117,6 @@ static void map_init(struct map* map) {
     memset(map->buckets, 0, map->count * sizeof(struct bucket));
 }
 
-/* Might be handy when clearing database etc. */
 static void map_free(struct map *map) {
     unsigned i, j, n, m;
     struct bucket *bucket;
@@ -115,45 +147,40 @@ static void map_free(struct map *map) {
     }
 
     xfree(map->buckets);
+    if (map->filename && remove(map->filename) == -1)
+        printf("map_free(0x%p): warning: can't remove %s: (%d): %s\n", map, map->filename,
+                errno, strerror(errno));
 }
 
-static int map_get(const struct map *map, const char *key, char *out_buf,
+static struct pair *map_get(const struct map *map, const char *key, char *out_buf,
         unsigned int n_out) {
     unsigned int index;
     struct bucket *bucket;
     struct pair *pair;
 
     if (!map)
-        return 0;
+        return NULL;
     if (!key)
-        return 0;
+        return NULL;
 
     index = hash(key) % map->count;
     bucket = &map->buckets[index];
     pair = get_pair(bucket, key);
 
     if (!pair)
-        return 0;
-
-    if (out_buf == NULL && n_out == 0)
-        return strlen(pair->value) + 1;
-
-    if (out_buf == NULL)
-        return 0;
-
+        return NULL;
+    if (!out_buf || !n_out)
+        return NULL;
     if (strlen(pair->value) >= n_out)
-        return 0;
+        return NULL;
 
     strcpy(out_buf, pair->value);
-    return 1;
+    return pair;
 }
 
 static bool map_exists(const struct map *map, const char *key) {
     unsigned int index;
     struct bucket *bucket;
-
-    if (map == NULL)
-        return false;
 
     if (key == NULL)
         return false;
@@ -169,8 +196,6 @@ static bool map_unset(const struct map *map, const char *key) {
     struct bucket *bucket;
     struct pair *pair;
 
-    if (map == NULL)
-        return false;
     if (key == NULL)
         return false;
 
@@ -186,7 +211,27 @@ static bool map_unset(const struct map *map, const char *key) {
     return false;
 }
 
-static int map_put(const struct map *map, const char *key,
+static void map_put_to_file(const char *filename, struct pair *pair)
+{
+    FILE *fp;
+
+    if (!pair) {
+        fprintf(stderr, "map_put_to_file(): invalid pair pointer passed\n");
+        return;
+    }
+
+    fp = fopen(filename, "a");
+    if (!fp) {
+        fprintf(stderr, "fatal: failed to open/create file %s (%d)%s\n",
+                filename, errno, strerror(errno));
+        return;
+    }
+
+    fprintf(fp, "%s = %s\n", pair->key, pair->value);
+    fclose(fp);
+}
+
+static struct pair *map_put(const struct map *map, const char *key,
             const char* value) {
    unsigned int key_len, value_len, index;
    struct bucket *bucket;
@@ -194,11 +239,8 @@ static int map_put(const struct map *map, const char *key,
    char *tmp_value;
    char *new_key, *new_value;
 
-    if (map == NULL)
-        return 0;
-
     if (key == NULL || value == NULL)
-        return 0;
+        return NULL;
 
     key_len = strlen(key);
     value_len = strlen(value);
@@ -216,12 +258,12 @@ static int map_put(const struct map *map, const char *key,
             pair->value = tmp_value;
         }
         strcpy(pair->value, value);
-        return 1;
+        return pair;
     }
 
     new_key = malloc((key_len + 1) * sizeof(char));
     if (!new_key)
-        return 0;
+        return NULL;
 
     new_value = malloc((value_len + 1) * sizeof(char));
     if (!new_value)
@@ -249,11 +291,11 @@ static int map_put(const struct map *map, const char *key,
     strcpy(pair->key, key);
     strcpy(pair->value, value);
 
-    return 1;
+    return pair;
 out:
     xfree(new_key);
     xfree(new_value);
-    return 0;
+    return NULL;
 }
 
 static int map_get_count(const struct map *map) {
@@ -297,7 +339,7 @@ static struct pair *get_pair(struct bucket *bucket, const char *key) {
     i = 0;
     while (i < n) {
         if (pair->key != NULL && pair->value != NULL) {
-            if (strcmp(pair->key, key) == 0)
+            if (!strwildmatch(key, pair->key))
                 return pair;
         }
         pair++;
@@ -313,20 +355,6 @@ static unsigned long hash(const char *str) {
     while ((c = *str++))
         hash = ((hash << 5) + hash) + c;
     return hash;
-}
-
-static bool is_upper_string(const char *str) {
-    int i;
-    int len;
-
-    if (!str || *str=='\0')
-        return false;
-    len = strlen(str);
-    for (i = 0; i < len; i++) {
-        if (!isupper(str[i]))
-            return false;
-    }
-    return true;
 }
 
 static void __attribute__((noreturn)) error(const char *err, ...) {
@@ -417,16 +445,6 @@ static int sends(int fd, char *buf, ...) {
     return written;
 }
 
-/* String misc */
-static int strwildmatch(const char *pattern, const char *string) {
-    switch (*pattern) {
-        case '\0': return *string;
-        case '*': return !(!strwildmatch(pattern+1, string) || (*string && !strwildmatch(pattern, string+1)));
-        case '?': return !(*string && !strwildmatch(pattern+1, string+1));
-        default: return !((toupper(*pattern) == toupper(*string)) && !strwildmatch(pattern+1, string+1));
-    }
-}
-
 static void filter(char *a) {
     while (a[strlen(a)-1] == '\r' || a[strlen(a)-1] == '\n') a[strlen(a)-1] = 0;
 }
@@ -459,7 +477,7 @@ static void set_cmd(int fd, char *sender, int argc, char **argv)
     int i;
     char *what;
 
-    if (map_exists(&g_shitlist, sender))
+    if (map_exists(&g_shitlist, sender) && !map_exists(&g_whitelist, sender))
         return;
     if (argc < 2) {
         sends(fd, "PRIVMSG %s :%s: usage set <what> <description>\n", g_chan, sender);
@@ -469,15 +487,15 @@ static void set_cmd(int fd, char *sender, int argc, char **argv)
     to = desc;
     for (i = 1; i < argc; i++) {
         to = stpcpy(to, argv[i]);
-        to = stpcpy(to, " ");
+        if (i+1<argc) to = stpcpy(to, " ");
     }
 
-    desc[2047] = 0;
     if (!map_exists(&g_database, what)) {
-        map_put(&g_database, what, desc);
+        struct pair *pair = map_put(&g_database, what, desc);
         sends(fd, "PRIVMSG %s :Ok, %s\n", g_chan, sender);
+        map_put_to_file(g_dbfile, pair);
     } else {
-        sends(fd, "PRIVMSG %s :Sorry, %s, the term %s has a description.  Try !what %s %s\n",
+        sends(fd, "PRIVMSG %s :Sorry, %s, the term %s has a description.  Try !give %s %s\n",
                 g_chan, sender, what, sender, what);
     }
 }
@@ -496,6 +514,7 @@ static void give_cmd(int fd, char *sender, int argc, char **argv)
 {
     int i;
     char out_buf[2048];
+    struct pair *pair;
     static const char *nope_responds[] = {
         "I don't know",
         "Sorry, I can't find that term.",
@@ -511,9 +530,10 @@ static void give_cmd(int fd, char *sender, int argc, char **argv)
         return;
     }
 
-    if (!!map_get(&g_database, argv[1], out_buf, 2048)) {
-        send_term(fd, argv[0], argv[1], out_buf);
-    } else {
+    pair = map_get(&g_database, argv[1], out_buf, 2048);
+    if (pair)
+        send_term(fd, argv[0], pair->key, out_buf);
+    else {
         i = rand() % (sizeof(nope_responds) / sizeof(nope_responds[0]));
         if (nope_responds[i] == NULL)
             i=0;
@@ -522,7 +542,7 @@ static void give_cmd(int fd, char *sender, int argc, char **argv)
 }
 
 static void count_cmd(int fd, char *sender, int argc, char **argv) {
-    if (map_exists(&g_shitlist, sender))
+    if (map_exists(&g_shitlist, sender) && !map_exists(&g_whitelist, sender))
         return;
     sends(fd, "PRIVMSG %s :I have %d buckets in database, %s\n",
             g_chan, map_get_count(&g_database), sender);
@@ -531,10 +551,10 @@ static void count_cmd(int fd, char *sender, int argc, char **argv) {
 static void rm_cmd(int fd, char *sender, int argc, char **argv) {
     int i, j;
 
-    if (map_exists(&g_shitlist, sender))
+    if (strncmp(sender, g_owner, strlen(g_owner))
+         || !map_exists(&g_whitelist, sender))
         return;
-    if (strncmp(sender, g_owner, strlen(g_owner)))
-        return;
+
     if (argc < 1) {
         sends(fd, "PRIVMSG %s :%s: usage !rm <...>\n",
                 g_chan, sender);
@@ -557,21 +577,53 @@ static void rm_cmd(int fd, char *sender, int argc, char **argv) {
     }
 }
 
-static void sl_cmd(int fd, char *sender, int argc, char **argv) {
+static void wl_cmd(int fd, char *sender, int argc, char **argv) {
     int i;
+    struct pair *pair = NULL;
     if (strncmp(sender, g_owner, strlen(g_owner)))
         return;
     for (i = 0; i < argc; i++) {
         if (i+1 < argc)
-            map_put(&g_shitlist, argv[i], argv[i+1]);
+            pair = map_put(&g_whitelist, argv[i], argv[i+1]);
         else
-            map_put(&g_shitlist, argv[i], "No reason was given.");
+            pair = map_put(&g_whitelist, argv[i], "No reason was given.");
     }
+
+    if (pair)
+        map_put_to_file(g_wlfile, pair);
+}
+
+static void unwl_cmd(int fd, char *sender, int argc, char **argv) {
+    int i;
+    if (strncmp(sender, g_owner, strlen(g_owner)))
+        return;
+    for (i = 0; i <argc; i++) {
+        if (map_exists(&g_whitelist, argv[i]))
+            map_unset(&g_whitelist, argv[i]);
+    }
+}
+
+static void sl_cmd(int fd, char *sender, int argc, char **argv) {
+    int i;
+    struct pair *pair = NULL;
+    if (strncmp(sender, g_owner, strlen(g_owner))
+         || !map_exists(&g_whitelist, sender))
+        return;
+    for (i = 0; i < argc; i++) {
+        if (i+1 < argc)
+            pair = map_put(&g_shitlist, argv[i], argv[i+1]);
+        else
+            pair = map_put(&g_shitlist, argv[i], "No reason was given.");
+    }
+
+    if (pair)
+        map_put_to_file(g_slfile, pair);
 }
 
 static void unsl_cmd(int fd, char *sender, int argc, char **argv) {
     int i;
-    if (strncmp(sender, g_owner, strlen(g_owner)))
+    if (strncmp(sender, g_owner, strlen(g_owner))
+         || !map_exists(&g_whitelist, sender))
         return;
     for (i = 0; i <argc; i++) {
         if (map_exists(&g_shitlist, argv[i]))
@@ -580,13 +632,13 @@ static void unsl_cmd(int fd, char *sender, int argc, char **argv) {
 }
 
 static void why_cmd(int fd, char *sender, int argc, char **argv) {
-    char out_buf[1024];
+    char out_buf[2048];
     if (argc < 1) {
         sends(fd, "PRIVMSG %s :%s: usage !why <name>\n", g_chan, sender);
         return;
     }
 
-    if (!!map_get(&g_shitlist, argv[0], out_buf, 1024))
+    if (map_get(&g_shitlist, argv[0], out_buf, 2048))
         sends(fd, "PRIVMSG %s :%s was shitlisted for being %s\n",
                 g_chan, argv[0], out_buf);
 }
@@ -615,6 +667,13 @@ static void slc_cmd(int fd, char *sender, int argc, char **argv) {
     map_init(&g_shitlist);
 }
 
+static void wlc_cmd(int fd, char *sender, int argc, char **argv) {
+    if (strncmp(sender, g_owner, strlen(g_owner)))
+        return;   
+    map_free(&g_whitelist);
+    map_init(&g_whitelist);
+}
+
 static const struct command {
     const char *name;
     void (*cmd_func) (int fd, char *sender, int argc, char **argv);
@@ -625,9 +684,12 @@ static const struct command {
     { "give",  give_cmd    },
     { "count", count_cmd   },
     { "clear", clear_cmd   },
+    { "wlc_cmd", wlc_cmd   },
     { "slc",   slc_cmd     },
     { "rm",    rm_cmd      },
     { "sl",    sl_cmd      },
+    { "wl",    wl_cmd      },
+    { "unwl",  unwl_cmd    },
     { "unsl",  unsl_cmd    },
     { "why",   why_cmd     },
     { "quit",  quit_cmd    },
@@ -636,7 +698,7 @@ static const struct command {
 
 static void help_cmd(int fd, char *sender, int argc, char **argv) {
     int i;
-    char buffer[1024], *p;
+    char buffer[2048], *p;
     p=buffer;
     sends(fd, "PRIVMSG %s :Available commands:\n", g_chan);
     for (i = 0; commands[i].name != NULL; i++) {
@@ -648,44 +710,37 @@ static void help_cmd(int fd, char *sender, int argc, char **argv) {
 
 static void _PRIVMSG(int fd, char *sender, char *str) {
     char *from, *message;
-    int i;
     char *p, **argv;
-    int j, argc;
+    unsigned int i, j, argc;
 
     for (i=0;i<strlen(sender)&&sender[i]!='!';i++);
     sender[i]=0;
-    sender++;   /* strip the : */
+    sender++;
 
     for (i=0;i<strlen(str) && str[i] != ' ';i++);
     str[i]=0;
     from=str;
     message=str+i+2;
 
-    if (from[0] == '#') {
-        if (message[0] == '!') {
-            message++;
-            for (i=0; commands[i].name != NULL; i++) {
-                int len = strlen(commands[i].name);
-                if (!strncmp(message, commands[i].name, len)) {
-                    message += len + 1;
+    if (from[0] == '#' && message[0] == '!') {
+        message++;
+        for (i=0; commands[i].name != NULL; i++) {
+            int len = strlen(commands[i].name);
+            if (!strncmp(message, commands[i].name, len)) {
+                message += len + 1;
 
-                    argv = (char **)calloc(1024, sizeof(char *));
-                    for (p = strtok(message, " "), j =0; p && *p && j < 1024; p=strtok((char *)NULL, " "),j++)
-                        argv[j] = strdup(p);
-                    argv[j + 1] = NULL;
-                    argc = j;
+                argv = (char **)calloc(2048, sizeof(char *));
+                for (p = strtok(message, " "), j =0; p && *p && j < 2048; p=strtok((char *)NULL, " "),j++)
+                    argv[j] = strdup(p);
+                argv[j + 1] = NULL;
+                argc = j;
 
-                    commands[i].cmd_func(fd, sender, argc, argv);
-                    for (i = 0; i < argc; i++)
-                        free(argv[i]);
-                    xfree(argv);
-                    break;
-                }    
+                commands[i].cmd_func(fd, sender, argc, argv);
+                for (i = 0; i < argc; i++)
+                    xfree(argv[i]);
+                xfree(argv);
+                break;    
             }
-        } else {
-            char out_buf[1024];
-            if (message && !!map_get(&g_database, message, out_buf, 1024))
-                send_term(fd, sender, message, out_buf);
         }
     }
 }
@@ -706,6 +761,60 @@ static const struct messages {
     { "475",    _recon },
     { NULL,    (void (*)(int,char *,char *))0 }
 };
+
+static int read_database(const char *filename, const struct map *map)
+{
+    FILE *fp;
+    char buffer[4096];
+    char *str;
+    int parsed = 0;
+
+    fp = fopen(filename, "r");
+    if (!fp) {
+         fprintf(stderr, "failed to read database %s (%d)%s\n",
+                 filename, errno, strerror(errno));
+         return 0;
+    }
+
+    while (fgets(buffer, sizeof(buffer), fp)) {
+        char key[512], value[2048];
+        if ((str = strpbrk(buffer, "\n")))
+            *str = '\0';
+
+        str = buffer;
+        while (isspace(*str) && *str) str++;
+        if (sscanf(str, "%[^=] = \"%[^\"]\"", key, value) == 2
+            || sscanf(str, "%[^=] = '%[^\']'",key, value) == 2
+            || sscanf(str, "%[^=] = %[^;#]",  key, value) == 2) {
+            strcpy(key, strstrip(key));
+            if (!strcmp(value, "\"\"") || !strcmp(value, "''"))
+                value[0] = 0; 
+            map_put(map, key, value);
+            parsed++;
+        } else if (sscanf(str, "%[^=] = %[;#]", key, value) == 2
+            || sscanf(str, "%[^=] %[=]",        key, value) == 2) {
+            strcpy(key, strstrip(key));
+            value[0] = 0;
+            map_put(map, key, value);
+            parsed++;
+        }
+    }
+
+    fclose(fp);
+    return parsed;
+}
+
+static void init_database(const char *f, struct map *map)
+{
+    int count;
+
+    map_init(map);
+    count = read_database(f, map);
+    if (!count)
+        fprintf(stderr, "Warning: failed to load database file %s\n", f);
+    printf("Notice: read %d terms from %s\n", count, f);
+    map->filename = f;
+}
 
 int main(int argc, char **argv) { 
     char c;
@@ -748,13 +857,14 @@ int main(int argc, char **argv) {
                     fprintf(stderr, "Unknown option -%c.\n", optopt);
                 else
                     fprintf(stderr, "Unknown option character '\\x%x'.\n",
-                        optopt);
+                       optopt);
                return 1;
         }
     }
 
-    map_init(&g_database);
-    map_init(&g_shitlist);
+    init_database(g_dbfile, &g_database);
+    init_database(g_slfile, &g_shitlist);
+    init_database(g_wlfile, &g_whitelist);
 derp:
     sockfd = get_sock(host, port);
     while (true) {
@@ -776,7 +886,7 @@ derp:
 
         str = strtok(buff, "\n");
         while (str && *str) {
-            char name[1024], sender[1024];
+            char name[1024], sender[256];
             filter(str);
 
             if (*str == ':') {
