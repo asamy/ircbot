@@ -60,12 +60,12 @@ struct map {
 };
 
 static struct map g_database = {
-    .count = 1000,
+    .count = 1,
     .buckets = NULL
 };
 
 static struct map g_shitlist = {
-    .count = 100,
+    .count = 1,
     .buckets = NULL
 };
 
