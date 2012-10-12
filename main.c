@@ -30,6 +30,7 @@
 
 char *g_chan = "#test_kef_bot";
 char *m_nick = "testfulguy";
+char *g_owner = "fallen";
 bool verbose=true;
 
 static void *xmalloc(size_t size) {
@@ -90,6 +91,11 @@ struct map {
 
 static struct map g_database = {
     .count = 1000,
+    .buckets = NULL
+};
+
+static struct map g_shitlist = {
+    .count = 100,
     .buckets = NULL
 };
 
@@ -188,6 +194,28 @@ static bool map_exists(const struct map *map, const char *key) {
     return get_pair(bucket, key);
 }
 
+static bool map_unset(const struct map *map, const char *key) {
+    unsigned int index;
+    struct bucket *bucket;
+    struct pair *pair;
+
+    if (map == NULL)
+        return false;
+    if (key == NULL)
+        return false;
+
+    index = hash(key) % map->count;
+    bucket = &map->buckets[index];
+
+    pair = get_pair(bucket, key);
+    if (pair) {
+        free(pair->key);
+        free(pair->value);
+        return true;
+    }
+    return false;
+}
+
 static int map_put(const struct map *map, const char *key,
             const char* value) {
    unsigned int key_len, value_len, index;
@@ -227,18 +255,18 @@ static int map_put(const struct map *map, const char *key,
 
     new_value = xmalloc((value_len + 1) * sizeof(char));
     if (!new_value)
-        goto out_error;
+        goto out;
 
     if (bucket->count == 0) {
         bucket->pairs = xmalloc(sizeof(struct pair));    /* initial pair */
         if (bucket->pairs == NULL)
-            goto out_error;
+            goto out;
 
         bucket->count = 1;
     } else {
         tmp_pairs = xrealloc(bucket->pairs, (bucket->count + 1) * sizeof(struct pair));
         if (tmp_pairs == NULL)
-            goto out_error;
+            goto out;
 
         bucket->pairs = tmp_pairs;
         bucket->count++;
@@ -252,7 +280,7 @@ static int map_put(const struct map *map, const char *key,
     strcpy(pair->value, value);
 
     return 1;
-out_error:
+out:
     xfree(new_key);
     xfree(new_value);
     return 0;
@@ -458,7 +486,8 @@ static void set_cmd(int fd, char *sender, int argc, char **argv)
     int i;
     char *what;
 
-    printf("%d\n",argc);
+    if (map_exists(&g_shitlist, sender))
+        return;
     if (argc < 2) {
         sends(fd, "PRIVMSG %s :%s: usage set <what> <description>\n", g_chan, sender);
         return;
@@ -480,7 +509,7 @@ static void set_cmd(int fd, char *sender, int argc, char **argv)
     }
 }
 
-static void get_cmd(int fd, char *sender, int argc, char **argv)
+static void what_cmd(int fd, char *sender, int argc, char **argv)
 {
     int i;
     char out_buf[2048];
@@ -516,8 +545,63 @@ static void get_cmd(int fd, char *sender, int argc, char **argv)
 }
 
 static void count_cmd(int fd, char *sender, int argc, char **argv) {
+    if (map_exists(&g_shitlist, sender))
+        return;
     sends(fd, "PRIVMSG %s :I have %d buckets in database, %s\n",
             g_chan, map_get_count(&g_database), sender);
+}
+
+static void rm_cmd(int fd, char *sender, int argc, char **argv) {
+    int i, j;
+
+    if (map_exists(&g_shitlist, sender))
+        return;
+    if (strncmp(sender, g_owner, strlen(g_owner)))
+        return;
+    if (argc < 1) {
+        sends(fd, "PRIVMSG %s :%s: usage !rm <...>\n",
+                g_chan, sender);
+        return;
+    }
+
+    for (i = 0; i < argc; i++) {
+        if (map_exists(&g_database, argv[i])) {
+            map_unset(&g_database, argv[i]);
+            j++;
+        }
+    }
+
+    if (j > 1) {
+        sends(fd, "PRIVMSG %s :Successfully, removed %d elements, %s\n",
+            g_chan, j, sender);
+    } else {
+        sends(fd, "PRIVMSG %s :Can't find that term, %s\n",
+                g_chan, sender);
+    }
+}
+
+static void sl_cmd(int fd, char *sender, int argc, char **argv) {
+    int i;
+    if (strncmp(sender, g_owner, strlen(g_owner)))
+        return;
+    for (i = 0; i < argc; i++) {
+        if (i+1 < argc)
+            map_put(&g_shitlist, argv[i], argv[i+1]);
+        else
+            map_put(&g_shitlist, argv[i], "No reason was given.");
+    }
+}
+
+static void why_cmd(int fd, char *sender, int argc, char **argv) {
+    char out_buf[1024];
+    if (argc < 1) {
+        sends(fd, "PRIVMSG %s :%s: usage !why <name>\n", g_chan, sender);
+        return;
+    }
+
+    if (!!map_get(&g_shitlist, argv[0], out_buf, 1024))
+        sends(fd, "PRIVMSG %s :%s was shitlisted for being %s\n",
+                g_chan, argv[0], out_buf);
 }
 
 static const struct command {
@@ -527,16 +611,24 @@ static const struct command {
     { "help",  help_cmd    },
     { "set",   set_cmd     },
     { "add",   set_cmd     },
-    { "what",  get_cmd     },
+    { "what",  what_cmd     },
     { "count", count_cmd   },
+    { "rm",    rm_cmd      },
+    { "sl",    sl_cmd      },
+    { "why",   why_cmd     },
     { NULL,   NULL         }
 };
 
 static void help_cmd(int fd, char *sender, int argc, char **argv) {
     int i;
-    sends(fd, "Available commands:\n");
-    for (i = 0; commands[i].name != NULL; i++)
-        sends(fd, "!%s\n", commands[i].name);
+    char buffer[1024], *p;
+    p=buffer;
+    sends(fd, "PRIVMSG %s :Available commands:\n", g_chan);
+    for (i = 0; commands[i].name != NULL; i++) {
+        p = stpcpy(p, commands[i].name);
+        p = stpcpy(p, " ");
+    }
+    sends(fd, "PRIVMSG %s :%s\n", g_chan, buffer);
 }
 
 static void _PRIVMSG(int fd, char *sender, char *str) {
@@ -554,7 +646,6 @@ static void _PRIVMSG(int fd, char *sender, char *str) {
     from=str;
     message=str+i+2;
 
-    printf("From: %s\tSender: %s\nMessage: %s\n", from, sender, message);
     if (from[0] == '#') {
         if (message[0] == '!') {
             message++;
@@ -596,11 +687,12 @@ static const struct messages {
     { NULL,    (void (*)(int,char *,char *))0 }
 };
 
-/* Where the bugs occur */
-int main(int argc, char **argv) {
-#ifdef FORK_THIS_SHIT
-    if (fork()) exit(0);
-#endif
+int main(int argc, char **argv) { 
+    char c;
+    int optidx = 0;
+    char *host = "irc.quakenet.org";
+    int port = 6667;
+    int sockfd = -1;
     static const struct option opts[] = {
         {"channel", required_argument,    0, 'c'},
         {"host",    required_argument,    0, 'h'},
@@ -610,12 +702,6 @@ int main(int argc, char **argv) {
         {"silent",  no_argument,          0, 's'},
         {0,         0,                    0,  0 }
     };
-
-    char c;
-    int optidx = 0;
-    char *host = "irc.quakenet.org";
-    int port = 6667;
-    int sockfd = -1;
 
     srand(time(NULL));
     while ((c = getopt_long(argc, argv, "c:h:p:n:vs", opts, &optidx)) != -1) {
@@ -648,6 +734,7 @@ int main(int argc, char **argv) {
     }
 
     init_map(&g_database);
+    init_map(&g_shitlist);
 derp:
     sockfd = get_sock(host, port);
     while (true) {
@@ -677,9 +764,8 @@ derp:
                 str[i] = '\0';
                 strcpy(sender, str);
                 strcpy(str, str+i+1);
-            } else {
+            } else
                 strcpy(sender, "*");
-            }
 
             for (i = 0; i < strlen(str) && str[i] != ' '; i++);
             str[i]= 0;
