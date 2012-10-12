@@ -54,7 +54,7 @@ static void *xrealloc(void *old, size_t size) {
     if (old == NULL) {
         new = xmalloc(size);
     } else {
-        new = (void *)realloc(old, size ? size : 1);
+        new = (void *)realloc(old, size ?: 1);
         if (new == NULL) {
             fprintf(stderr, "fatal: memory exhausted (failed to realloc %u bytes).\n",
                     size);
