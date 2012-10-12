@@ -477,8 +477,8 @@ static void set_cmd(int fd, char *sender, int argc, char **argv)
         map_put(&g_database, what, desc);
         sends(fd, "PRIVMSG %s :Ok, %s\n", g_chan, sender);
     } else {
-        sends(fd, "PRIVMSG %s :Sorry, %s, the term %s has a description.  Try !what %s\n",
-                g_chan, sender, what, what);
+        sends(fd, "PRIVMSG %s :Sorry, %s, the term %s has a description.  Try !what %s %s\n",
+                g_chan, sender, what, sender, what);
     }
 }
 
@@ -669,20 +669,21 @@ static void _PRIVMSG(int fd, char *sender, char *str) {
                 if (!strncmp(message, commands[i].name, len)) {
                     message += len + 1;
 
-                    argv = (char **)calloc(30, sizeof(char *));
-                    for (p = strtok(message, " "), j =0; p && *p && j < 30; p=strtok((char *)NULL, " "),j++)
+                    argv = (char **)calloc(1024, sizeof(char *));
+                    for (p = strtok(message, " "), j =0; p && *p && j < 1024; p=strtok((char *)NULL, " "),j++)
                         argv[j] = strdup(p);
                     argv[j + 1] = NULL;
                     argc = j;
 
-                    (*commands[i].cmd_func)(fd, sender, argc, argv);
-                    free(argv);
+                    commands[i].cmd_func(fd, sender, argc, argv);
+                    for (i = 0; i < argc; i++)
+                        free(argv[i]);
+                    xfree(argv);
                     break;
                 }    
             }
         } else {
             char out_buf[1024];
-            puts(message);
             if (message && !!map_get(&g_database, message, out_buf, 1024))
                 send_term(fd, sender, message, out_buf);
         }
