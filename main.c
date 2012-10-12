@@ -6,6 +6,10 @@
  * fallen wrote this file.  As long as you retain this notice you
  * can do whatever you want with this stuff. If we meet some day, and you think
  * this stuff is worth it, you can buy me a beer in return.
+ *
+ * Hash map implementation (c) 2009, 2011 Per Ola Kristensson.
+ * GNU GPL v3.  See also:
+ * http://pokristensson.com/code/strmap/strmap.c
  */
 
 #define _GNU_SOURCE
@@ -35,47 +39,11 @@ char *auth = "auth";
 char *auth_pw = "auth_pw";
 bool verbose=true;
 
-static void *xmalloc(size_t size) {
-    void *ret;
-
-    ret = malloc(size);
-    if (!ret) {
-        fprintf(stderr, "fatal: memory exhausted (failed to allocate %u bytes).\n",
-                size);
-#ifndef NDEBUG
-        exit(EXIT_FAILURE);
-#endif
-        return NULL;
-    }
-
-    return ret;
-}
-static void *xrealloc(void *old, size_t size) {
-    void *new;
-
-    if (old == NULL) {
-        new = xmalloc(size);
-    } else {
-        new = (void *)realloc(old, size ?: 1);
-        if (new == NULL) {
-            fprintf(stderr, "fatal: memory exhausted (failed to realloc %u bytes).\n",
-                    size);
-#ifndef NDEBUG
-            exit(EXIT_FAILURE);
-#endif
-            return NULL;
-        }
-    }
-
-    return new;
-}
-
 static void xfree(void *ptr) {
     if (ptr)
         free(ptr);
 }
 
-/** Hash map implementation based on strmap by Per Ola Kristensson. */
 struct pair {
     char *key;
     char *value;
@@ -105,7 +73,7 @@ static struct pair *get_pair(struct bucket *bucket, const char *key);
 static unsigned long hash(const char *str);
 
 static void init_map(struct map* map) {
-    map->buckets = xmalloc(map->count * sizeof(struct bucket));
+    map->buckets = malloc(map->count * sizeof(struct bucket));
     if (map->buckets == NULL) {
         fprintf(stderr,
                 "fatal: failed to allocate buckets of count %u for map\n",
@@ -241,7 +209,7 @@ static int map_put(const struct map *map, const char *key,
     pair = get_pair(bucket, key);
     if (pair) {
         if (strlen(pair->value) < value_len) {
-            tmp_value = xrealloc(pair->value, (value_len + 1) * sizeof(char));
+            tmp_value = realloc(pair->value, (value_len + 1) * sizeof(char));
             if (!tmp_value)
                 return 0;
 
@@ -251,22 +219,22 @@ static int map_put(const struct map *map, const char *key,
         return 1;
     }
 
-    new_key = xmalloc((key_len + 1) * sizeof(char));
+    new_key = malloc((key_len + 1) * sizeof(char));
     if (!new_key)
         return 0;
 
-    new_value = xmalloc((value_len + 1) * sizeof(char));
+    new_value = malloc((value_len + 1) * sizeof(char));
     if (!new_value)
         goto out;
 
     if (bucket->count == 0) {
-        bucket->pairs = xmalloc(sizeof(struct pair));    /* initial pair */
+        bucket->pairs = malloc(sizeof(struct pair));    /* initial pair */
         if (bucket->pairs == NULL)
             goto out;
 
         bucket->count = 1;
     } else {
-        tmp_pairs = xrealloc(bucket->pairs, (bucket->count + 1) * sizeof(struct pair));
+        tmp_pairs = realloc(bucket->pairs, (bucket->count + 1) * sizeof(struct pair));
         if (tmp_pairs == NULL)
             goto out;
 
