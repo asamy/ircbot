@@ -592,6 +592,16 @@ static void sl_cmd(int fd, char *sender, int argc, char **argv) {
     }
 }
 
+static void unsl_cmd(int fd, char *sender, int argc, char **argv) {
+    int i;
+    if (strncmp(sender, g_owner, strlen(g_owner)))
+        return;
+    for (i = 0; i <argc; i++) {
+        if (map_exists(&g_shitlist, argv[i]))
+            map_unset(&g_shitlist, argv[i]);
+    }
+}
+
 static void why_cmd(int fd, char *sender, int argc, char **argv) {
     char out_buf[1024];
     if (argc < 1) {
@@ -611,10 +621,11 @@ static const struct command {
     { "help",  help_cmd    },
     { "set",   set_cmd     },
     { "add",   set_cmd     },
-    { "what",  what_cmd     },
+    { "what",  what_cmd    },
     { "count", count_cmd   },
     { "rm",    rm_cmd      },
     { "sl",    sl_cmd      },
+    { "unsl",  unsl_cmd    },
     { "why",   why_cmd     },
     { NULL,   NULL         }
 };
