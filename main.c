@@ -72,7 +72,7 @@ static struct map g_shitlist = {
 static struct pair *get_pair(struct bucket *bucket, const char *key);
 static unsigned long hash(const char *str);
 
-static void init_map(struct map* map) {
+static void map_init(struct map* map) {
     map->buckets = malloc(map->count * sizeof(struct bucket));
     if (map->buckets == NULL) {
         fprintf(stderr,
@@ -482,14 +482,21 @@ static void set_cmd(int fd, char *sender, int argc, char **argv)
     }
 }
 
-static void what_cmd(int fd, char *sender, int argc, char **argv)
+static void send_term(int fd, char *sender, char *term, char *out) {
+    static const char *ok_responds[] = {
+        "I heard", "I think",  NULL
+    };
+    int i = rand() % (sizeof(ok_responds) / sizeof(ok_responds[0]));
+    if (ok_responds[i] == NULL)
+        i=0;
+    sends(fd, "PRIVMSG %s :%s %s was %s, %s\n", g_chan, ok_responds[i], term, out, sender);
+}
+
+static void give_cmd(int fd, char *sender, int argc, char **argv)
 {
     int i;
     char out_buf[2048];
-    static const char *ok_responds[] = {
-        "I heard",  "Last time", 
-        "I think",  NULL
-    }, *nope_responds[] = {
+    static const char *nope_responds[] = {
         "I don't know",
         "Sorry, I can't find that term.",
         "What is it?",  "I'm done",
@@ -499,16 +506,13 @@ static void what_cmd(int fd, char *sender, int argc, char **argv)
         NULL
     };
 
-    if (argc < 1) {
-        sends(fd, "PRIVMSG %s :%s: Usage !get <what>\n", g_chan, sender);
+    if (argc < 2) {
+        sends(fd, "PRIVMSG %s :%s: Usage !give <who> <what>\n", g_chan, sender);
         return;
     }
 
-    if (!!map_get(&g_database, argv[0], out_buf, 2048)) {
-        i = rand() % (sizeof(ok_responds) / sizeof(ok_responds[0]));
-        if (ok_responds[i] == NULL)
-            i=0;
-        sends(fd, "PRIVMSG %s :%s %s was %s, %s\n", g_chan, ok_responds[i], argv[0], out_buf, sender);
+    if (!!map_get(&g_database, argv[1], out_buf, 2048)) {
+        send_term(fd, argv[0], argv[1], out_buf);
     } else {
         i = rand() % (sizeof(nope_responds) / sizeof(nope_responds[0]));
         if (nope_responds[i] == NULL)
@@ -591,14 +595,14 @@ static void clear_cmd(int fd, char *sender, int argc, char **argv) {
     if (strncmp(sender, g_owner, strlen(g_owner)))
         return;
     map_free(&g_database);
-    init_map(&g_database);
+    map_init(&g_database);
 }
 
 static void slc_cmd(int fd, char *sender, int argc, char **argv) {
     if (strncmp(sender, g_owner, strlen(g_owner)))
         return;
     map_free(&g_shitlist);
-    init_map(&g_shitlist);
+    map_init(&g_shitlist);
 }
 
 static const struct command {
@@ -608,7 +612,7 @@ static const struct command {
     { "help",  help_cmd    },
     { "set",   set_cmd     },
     { "add",   set_cmd     },
-    { "what",  what_cmd    },
+    { "give",  give_cmd    },
     { "count", count_cmd   },
     { "clear", clear_cmd   },
     { "slc",   slc_cmd     },
@@ -665,8 +669,12 @@ static void _PRIVMSG(int fd, char *sender, char *str) {
                     break;
                 }    
             }
-        } else if (is_upper_string(message))
-            sends(fd, "PRIVMSG %s :OMG SHOUTING\n", from);
+        } else {
+            char out_buf[1024];
+            puts(message);
+            if (message && !!map_get(&g_database, message, out_buf, 1024))
+                send_term(fd, sender, message, out_buf);
+        }
     }
 }
 
@@ -733,8 +741,8 @@ int main(int argc, char **argv) {
         }
     }
 
-    init_map(&g_database);
-    init_map(&g_shitlist);
+    map_init(&g_database);
+    map_init(&g_shitlist);
 derp:
     sockfd = get_sock(host, port);
     while (true) {
