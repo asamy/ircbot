@@ -339,7 +339,7 @@ static struct pair *get_pair(struct bucket *bucket, const char *key) {
     i = 0;
     while (i < n) {
         if (pair->key != NULL && pair->value != NULL) {
-            if (!strwildmatch(key, pair->key))
+            if (!strcmp(pair->key, key) || !strwildmatch(key, pair->key))
                 return pair;
         }
         pair++;
@@ -457,7 +457,6 @@ static  void _376(int fd, char *sender, char *str) {
 }
 
 static void _PING(int fd, char *sender, char *str) {
-    printf("Ping pong\n");
     sends(fd, "PONG %s\n", str);
 }
 
@@ -487,8 +486,9 @@ static void set_cmd(int fd, char *sender, int argc, char **argv)
     to = desc;
     for (i = 1; i < argc; i++) {
         to = stpcpy(to, argv[i]);
-        if (i+1<argc) to = stpcpy(to, " ");
+        if (i+1<argc) *to++ = ' ';
     }
+    *to = 0;
 
     if (!map_exists(&g_database, what)) {
         struct pair *pair = map_put(&g_database, what, desc);
@@ -501,13 +501,7 @@ static void set_cmd(int fd, char *sender, int argc, char **argv)
 }
 
 static void send_term(int fd, char *sender, char *term, char *out) {
-    static const char *ok_responds[] = {
-        "I heard", "I think",  NULL
-    };
-    int i = rand() % (sizeof(ok_responds) / sizeof(ok_responds[0]));
-    if (ok_responds[i] == NULL)
-        i=0;
-    sends(fd, "PRIVMSG %s :%s %s was %s, %s\n", g_chan, ok_responds[i], term, out, sender);
+    sends(fd, "PRIVMSG %s :%s %s, %s\n", g_chan, term, out, sender);
 }
 
 static void give_cmd(int fd, char *sender, int argc, char **argv)
@@ -517,9 +511,8 @@ static void give_cmd(int fd, char *sender, int argc, char **argv)
     struct pair *pair;
     static const char *nope_responds[] = {
         "I don't know",
-        "Sorry, I can't find that term.",
+        "Sorry, I can't find that term",
         "What is it?",  "I'm done",
-        "Why don't you RTFM for it?",
         "Have you tried reading the manual?",
         "I give up, what is it?", 
         NULL
@@ -542,7 +535,7 @@ static void give_cmd(int fd, char *sender, int argc, char **argv)
 }
 
 static void count_cmd(int fd, char *sender, int argc, char **argv) {
-    if (map_exists(&g_shitlist, sender) && !map_exists(&g_whitelist, sender))
+    if (map_exists(&g_shitlist, sender))
         return;
     sends(fd, "PRIVMSG %s :I have %d buckets in database, %s\n",
             g_chan, map_get_count(&g_database), sender);
@@ -551,8 +544,7 @@ static void count_cmd(int fd, char *sender, int argc, char **argv) {
 static void rm_cmd(int fd, char *sender, int argc, char **argv) {
     int i, j;
 
-    if (strncmp(sender, g_owner, strlen(g_owner))
-         || !map_exists(&g_whitelist, sender))
+    if (strncmp(sender, g_owner, strlen(g_owner)) && !map_exists(&g_whitelist, sender))
         return;
 
     if (argc < 1) {
@@ -586,44 +578,36 @@ static void wl_cmd(int fd, char *sender, int argc, char **argv) {
         if (i+1 < argc)
             pair = map_put(&g_whitelist, argv[i], argv[i+1]);
         else
-            pair = map_put(&g_whitelist, argv[i], "No reason was given.");
+            pair = map_put(&g_whitelist, argv[i], "No reason was given."); 
+        if (pair) map_put_to_file(g_wlfile, pair);
     }
-
-    if (pair)
-        map_put_to_file(g_wlfile, pair);
 }
 
 static void unwl_cmd(int fd, char *sender, int argc, char **argv) {
     int i;
     if (strncmp(sender, g_owner, strlen(g_owner)))
         return;
-    for (i = 0; i <argc; i++) {
-        if (map_exists(&g_whitelist, argv[i]))
-            map_unset(&g_whitelist, argv[i]);
-    }
+    for (i = 0; i <argc; i++)
+        map_unset(&g_whitelist, argv[i]);
 }
 
 static void sl_cmd(int fd, char *sender, int argc, char **argv) {
     int i;
     struct pair *pair = NULL;
-    if (strncmp(sender, g_owner, strlen(g_owner))
-         || !map_exists(&g_whitelist, sender))
+    if (strncmp(sender, g_owner, strlen(g_owner)) && !map_exists(&g_whitelist, sender))
         return;
     for (i = 0; i < argc; i++) {
         if (i+1 < argc)
             pair = map_put(&g_shitlist, argv[i], argv[i+1]);
         else
             pair = map_put(&g_shitlist, argv[i], "No reason was given.");
+        if (pair) map_put_to_file(g_slfile, pair);
     }
-
-    if (pair)
-        map_put_to_file(g_slfile, pair);
 }
 
 static void unsl_cmd(int fd, char *sender, int argc, char **argv) {
     int i;
-    if (strncmp(sender, g_owner, strlen(g_owner))
-         || !map_exists(&g_whitelist, sender))
+    if (strncmp(sender, g_owner, strlen(g_owner)) && !map_exists(&g_whitelist, sender))
         return;
     for (i = 0; i <argc; i++) {
         if (map_exists(&g_shitlist, argv[i]))
@@ -684,7 +668,7 @@ static const struct command {
     { "give",  give_cmd    },
     { "count", count_cmd   },
     { "clear", clear_cmd   },
-    { "wlc_cmd", wlc_cmd   },
+    { "wlc",   wlc_cmd     },
     { "slc",   slc_cmd     },
     { "rm",    rm_cmd      },
     { "sl",    sl_cmd      },
@@ -701,10 +685,10 @@ static void help_cmd(int fd, char *sender, int argc, char **argv) {
     char buffer[2048], *p;
     p=buffer;
     sends(fd, "PRIVMSG %s :Available commands:\n", g_chan);
-    for (i = 0; commands[i].name != NULL; i++) {
-        p = stpcpy(p, commands[i].name);
-        p = stpcpy(p, " ");
-    }
+    for (i = 0; commands[i].name != NULL; i++)
+        p = stpcpy(p, commands[i].name), *p++ = ' ';
+
+    *p = 0;
     sends(fd, "PRIVMSG %s :%s\n", g_chan, buffer);
 }
 
@@ -747,19 +731,19 @@ static void _PRIVMSG(int fd, char *sender, char *str) {
 
 static const struct messages {
     char *cmd;
-    void (* func)(int,char *,char *); 
+    void (*func) (int, char *, char *); 
 } msgs[] = {
-    { "376",    _376   },
-    { "433",    _433   },
-    { "422",    _376   },
-    { "PING",   _PING  },
-    { "PRIVMSG", _PRIVMSG },
-    { "467",    _recon },
-    { "471",    _recon },
-    { "473",    _recon },
-    { "474",    _recon },
-    { "475",    _recon },
-    { NULL,    (void (*)(int,char *,char *))0 }
+    { "376",     _376       },
+    { "433",     _433       },
+    { "422",     _376       },
+    { "PING",    _PING      },
+    { "PRIVMSG",  _PRIVMSG  },
+    { "467",     _recon     },
+    { "471",     _recon     },
+    { "473",     _recon     },
+    { "474",     _recon     },
+    { "475",     _recon     },
+    { NULL,      NULL       }
 };
 
 static int read_database(const char *filename, const struct map *map)
@@ -784,15 +768,15 @@ static int read_database(const char *filename, const struct map *map)
         str = buffer;
         while (isspace(*str) && *str) str++;
         if (sscanf(str, "%[^=] = \"%[^\"]\"", key, value) == 2
-            || sscanf(str, "%[^=] = '%[^\']'",key, value) == 2
-            || sscanf(str, "%[^=] = %[^;#]",  key, value) == 2) {
+             || sscanf(str, "%[^=] = '%[^\']'",key, value) == 2
+             || sscanf(str, "%[^=] = %[^;#]",  key, value) == 2) {
             strcpy(key, strstrip(key));
             if (!strcmp(value, "\"\"") || !strcmp(value, "''"))
                 value[0] = 0; 
             map_put(map, key, value);
             parsed++;
         } else if (sscanf(str, "%[^=] = %[;#]", key, value) == 2
-            || sscanf(str, "%[^=] %[=]",        key, value) == 2) {
+             || sscanf(str, "%[^=] %[=]",        key, value) == 2) {
             strcpy(key, strstrip(key));
             value[0] = 0;
             map_put(map, key, value);
@@ -812,8 +796,16 @@ static void init_database(const char *f, struct map *map)
     count = read_database(f, map);
     if (!count)
         fprintf(stderr, "Warning: failed to load database file %s\n", f);
-    printf("Notice: read %d terms from %s\n", count, f);
+    else
+        printf("Notice: read %d terms from %s\n", count, f);
     map->filename = f;
+}
+
+static void free_dbs(void)
+{
+    map_free(&g_database);
+    map_free(&g_shitlist);
+    map_free(&g_whitelist);
 }
 
 int main(int argc, char **argv) { 
@@ -865,6 +857,8 @@ int main(int argc, char **argv) {
     init_database(g_dbfile, &g_database);
     init_database(g_slfile, &g_shitlist);
     init_database(g_wlfile, &g_whitelist);
+
+    atexit(free_dbs);
 derp:
     sockfd = get_sock(host, port);
     while (true) {
@@ -907,6 +901,7 @@ derp:
                 sends(sockfd, "NICK %s\nUSER %s localhost localhost :%s\n", m_nick, m_nick, m_nick);
                 sent = true;
             }
+
             for (i = 0; msgs[i].cmd != NULL; i++)
                 if (!strcasecmp(msgs[i].cmd, name))
                     msgs[i].func(sockfd, sender, str);
