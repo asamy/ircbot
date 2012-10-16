@@ -45,6 +45,38 @@ char *g_slfile = "sl.db";     /* same as above */
 char *g_wlfile = "wl.db";     /* same... */
 bool verbose=true;
 
+char **explode(char *string, char separator, int *size)
+{
+    int start = 0, i, k = 0, count = 2;
+    char **strarr;
+    for (i = 0; string[i] != '\0'; i++) {
+        if (string[i] == separator)
+            count++;
+    }
+
+    *size = count-1;
+    strarr = calloc(count, sizeof(char*));
+    i = 0;
+    while (*string != '\0') {
+        if (*string == separator) {
+            strarr[i] = calloc(k - start + 2,sizeof(char));
+            strncpy(strarr[i], string - k + start, k - start);
+            strarr[i][k - start + 1] = '\0'; /* ensure null termination */
+            start = k;
+            start++;
+            i++;
+        }
+        string++;
+        k++;
+    }
+
+    strarr[i] = calloc(k - start + 1,sizeof(char));
+    strncpy(strarr[i], string - k + start, k - start);
+    strarr[++i] = NULL;
+ 
+    return strarr;
+}
+
 static int strwildmatch(const char *pattern, const char *string) {
     switch (*pattern) {
         case '\0': return *string;
@@ -169,11 +201,11 @@ static struct pair *map_get(const struct map *map, const char *key, char *out_bu
 
     if (!pair)
         return NULL;
+
     if (!out_buf || !n_out)
         return NULL;
     if (strlen(pair->value) >= n_out)
         return NULL;
-
     strcpy(out_buf, pair->value);
     return pair;
 }
@@ -534,6 +566,19 @@ static void give_cmd(int fd, char *sender, int argc, char **argv)
     }
 }
 
+static void give_me(int fd, char *sender, int argc, char **argv) {
+    char outbuf[2048];
+    struct pair *pair;
+    if (argc < 1)
+        return;
+
+    pair = map_get(&g_database, argv[0], outbuf, 2048);
+    if (pair)
+        send_term(fd, sender, pair->key, outbuf);
+    else
+        printf("NOT %s xDDD\n", argv[0]);
+}
+
 static void count_cmd(int fd, char *sender, int argc, char **argv) {
     if (map_exists(&g_shitlist, sender))
         return;
@@ -630,7 +675,7 @@ static void why_cmd(int fd, char *sender, int argc, char **argv) {
 static void quit_cmd(int fd, char *sender, int argc, char **argv) {
     if (strncmp(sender, g_owner, strlen(g_owner)))
         return;
-    if (argc == 1)
+    if (argc < 1)
         sends(fd, "QUIT :shutting down\n");
     else
         sends(fd, "QUIT :%s\n", argv[0]);
@@ -677,6 +722,7 @@ static const struct command {
     { "unsl",  unsl_cmd    },
     { "why",   why_cmd     },
     { "quit",  quit_cmd    },
+    { "",      give_me     },
     { NULL,   NULL         }
 };
 
@@ -694,8 +740,9 @@ static void help_cmd(int fd, char *sender, int argc, char **argv) {
 
 static void _PRIVMSG(int fd, char *sender, char *str) {
     char *from, *message;
-    char *p, **argv;
-    unsigned int i, j, argc;
+    char **argv;
+    unsigned int i;
+    int argc;
 
     for (i=0;i<strlen(sender)&&sender[i]!='!';i++);
     sender[i]=0;
@@ -711,19 +758,13 @@ static void _PRIVMSG(int fd, char *sender, char *str) {
         for (i=0; commands[i].name != NULL; i++) {
             int len = strlen(commands[i].name);
             if (!strncmp(message, commands[i].name, len)) {
-                message += len + 1;
-
-                argv = (char **)calloc(2048, sizeof(char *));
-                for (p = strtok(message, " "), j =0; p && *p && j < 2048; p=strtok((char *)NULL, " "),j++)
-                    argv[j] = strdup(p);
-                argv[j + 1] = NULL;
-                argc = j;
-
-                commands[i].cmd_func(fd, sender, argc, argv);
-                for (i = 0; i < argc; i++)
-                    xfree(argv[i]);
-                xfree(argv);
-                break;    
+                if (len != 0)    /* hack for give_me command */
+                    message += len + 1;
+                if (message) {
+                    argv = explode(message, ' ', &argc);
+                    commands[i].cmd_func(fd, sender, argc, argv);
+                }
+                break;
             }
         }
     }
@@ -751,7 +792,7 @@ static int read_database(const char *filename, const struct map *map)
     FILE *fp;
     char buffer[4096];
     char *str;
-    int parsed = 0;
+    int count = 0;
 
     fp = fopen(filename, "r");
     if (!fp) {
@@ -774,18 +815,18 @@ static int read_database(const char *filename, const struct map *map)
             if (!strcmp(value, "\"\"") || !strcmp(value, "''"))
                 value[0] = 0; 
             map_put(map, key, value);
-            parsed++;
+            ++count;
         } else if (sscanf(str, "%[^=] = %[;#]", key, value) == 2
              || sscanf(str, "%[^=] %[=]",        key, value) == 2) {
             strcpy(key, strstrip(key));
             value[0] = 0;
             map_put(map, key, value);
-            parsed++;
+            ++count;
         }
     }
 
     fclose(fp);
-    return parsed;
+    return count;
 }
 
 static void init_database(const char *f, struct map *map)
