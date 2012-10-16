@@ -575,8 +575,6 @@ static void give_me(int fd, char *sender, int argc, char **argv) {
     pair = map_get(&g_database, argv[0], outbuf, 2048);
     if (pair)
         send_term(fd, sender, pair->key, outbuf);
-    else
-        printf("NOT %s xDDD\n", argv[0]);
 }
 
 static void count_cmd(int fd, char *sender, int argc, char **argv) {
@@ -742,7 +740,7 @@ static void _PRIVMSG(int fd, char *sender, char *str) {
     char *from, *message;
     char **argv;
     unsigned int i;
-    int argc;
+    int argc, j;
 
     for (i=0;i<strlen(sender)&&sender[i]!='!';i++);
     sender[i]=0;
@@ -763,6 +761,9 @@ static void _PRIVMSG(int fd, char *sender, char *str) {
                 if (message) {
                     argv = explode(message, ' ', &argc);
                     commands[i].cmd_func(fd, sender, argc, argv);
+                    for (j = 0; j < argc; j++)
+                        free(argv[j]);
+                    free(argv);
                 }
                 break;
             }
